@@ -2332,7 +2332,7 @@ queries:
   - uid: mondoo-aws-security-iam-users-only-one-access-key-aws
     filters: asset.platform == "aws-iam-user"
     mql: |
-      aws.iam.user.accessKeys.flat.where(Status == "Active").length <= 1
+      aws.iam.user.accessKeyDetails.where(status == "Active").length <= 1
   - uid: mondoo-aws-security-iam-users-only-one-access-key-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_iam_policy")
     mql: |
@@ -61484,11 +61484,8 @@ queries:
   - uid: mondoo-aws-security-s3-bucket-policy-no-public-principal-aws
     filters: asset.platform == "aws-s3-bucket"
     mql: |
-      aws.s3.bucket.policy == null ||
-      aws.s3.bucket.policy.statements.where(_['Effect'] == "Allow").none(
-        _['Principal'] == "*" ||
-        _['Principal']['AWS'] == "*" ||
-        _['Principal']['AWS'] != null && _['Principal']['AWS'].contains("*")
+      aws.s3.bucket.policyStatements.where(effect == "Allow").none(
+        principals['AWS'] != null && principals['AWS'].contains("*")
       )
   - uid: mondoo-aws-security-s3-bucket-policy-no-public-principal-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_s3_bucket_policy")
@@ -61697,16 +61694,9 @@ queries:
   - uid: mondoo-aws-security-s3-bucket-policy-secure-transport-aws
     filters: asset.platform == "aws-s3-bucket"
     mql: |
-      aws.s3.bucket.policy != null &&
-      aws.s3.bucket.policy.statements.any(
-        _['Effect'] == "Deny" &&
-        _['Condition'] != null &&
-        _['Condition']['Bool'] != null &&
-        _['Condition']['Bool']['aws:SecureTransport'] == "false" ||
-        _['Effect'] == "Deny" &&
-        _['Condition'] != null &&
-        _['Condition']['Bool'] != null &&
-        _['Condition']['Bool']['aws:SecureTransport'] == false
+      aws.s3.bucket.policyStatements.any(
+        effect == "Deny" && conditions['Bool'] != null && conditions['Bool']['aws:SecureTransport'] == "false" ||
+        effect == "Deny" && conditions['Bool'] != null && conditions['Bool']['aws:SecureTransport'] == false
       )
   - uid: mondoo-aws-security-s3-bucket-policy-secure-transport-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_s3_bucket_policy")
