@@ -3,7 +3,7 @@
 policies:
   - uid: mondoo-kubernetes-security
     name: Mondoo Kubernetes Cluster and Workload Security
-    version: 2.0.1
+    version: 2.0.2
     license: BUSL-1.1
     tags:
       mondoo.com/category: security
@@ -542,7 +542,7 @@ queries:
 
         If the kubelet is configured with the CLI parameter '--tls-cipher-suites', update the list (or define the parameter) to only include strong ciphers.
 
-        If the kubelet is configured via the kubelet config file with the 'tlsCipherSuites' parameter, update the list (or create an entry for 'tlsCipherSuites') to only include string ciphers.
+        If the kubelet is configured via the kubelet config file with the 'tlsCipherSuites' parameter, update the list (or create an entry for 'tlsCipherSuites') to only include strong ciphers.
     refs:
       - url: https://kubernetes.io/docs/reference/config-api/kubelet-config.v1beta1/#kubelet-config-k8s-io-v1beta1-KubeletConfiguration
         title: Kubelet configuration
@@ -582,13 +582,13 @@ queries:
       audit: |
         The kubelet CLI parameters override values in the kubelet configuration file.
 
-        Check the kubelet CLI parameters to see whether '--tls-cert-file' and '--tls-private-key' are set to a non-empty path/string.
+        Check the kubelet CLI parameters to see whether '--tls-cert-file' and '--tls-private-key-file' are set to a non-empty path/string.
 
         Check the kubelet configuration file to see whether 'tlsCertFile' and 'tlsPrivateKeyFile' are set to a non-empty path/string.
       remediation: |
         Configure the kubelet to use a user-provided certificate/key pair for serving up HTTPS.
 
-        After acquiring the TLS certificate/key pair, update the kubelet configuration file
+        After acquiring the TLS certificate/key pair, set the 'tlsCertFile' and 'tlsPrivateKeyFile' fields in the kubelet configuration file to the certificate and key paths.
 
         Or if using the deprecated kubelet CLI parameters, update the '--tls-cert-file' and '--tls-private-key-file' parameters to use the new certificate/key.
     refs:
@@ -686,19 +686,25 @@ queries:
         View the kubelet configuration file details:
 
         ```console
-        $ ls -l /etc/kubernetes/kubelet.conf
-        -rw-r--r-- 1 root root 1155 Sep 21 15:03 /etc/kubernetes/kubelet.conf
+        $ ls -l /var/lib/kubelet/config.yaml
+        -rw-r--r-- 1 root root 1155 Sep 21 15:03 /var/lib/kubelet/config.yaml
         ```
       remediation:
         - id: cli
           desc: |
             **Using CLI**
 
+            Find the kubelet configuration file path. It is the value of the kubelet's `--config` flag and defaults to `/var/lib/kubelet/config.yaml`:
+
+            ```bash
+            ps -ef | grep kubelet | grep -o '\-\-config=[^ ]*'
+            ```
+
             Update the ownership and permissions:
 
             ```bash
-            chown root:root /etc/kubernetes/kubelet.conf
-            chmod 600 /etc/kubernetes/kubelet.conf
+            chown root:root /var/lib/kubelet/config.yaml
+            chmod 600 /var/lib/kubelet/config.yaml
             ```
         - id: ansible
           desc: |
@@ -713,7 +719,7 @@ queries:
               tasks:
                 - name: Ensure kubelet configuration file has correct ownership and permissions
                   ansible.builtin.file:
-                    path: /etc/kubernetes/kubelet.conf
+                    path: /var/lib/kubelet/config.yaml
                     owner: root
                     group: root
                     mode: '0600'
@@ -727,8 +733,8 @@ queries:
             set -e
 
             echo "Securing kubelet configuration file..."
-            chown root:root /etc/kubernetes/kubelet.conf
-            chmod 600 /etc/kubernetes/kubelet.conf
+            chown root:root /var/lib/kubelet/config.yaml
+            chmod 600 /var/lib/kubelet/config.yaml
             ```
     refs:
       - url: https://kubernetes.io/docs/reference/command-line-tools-reference/kubelet/
@@ -794,15 +800,23 @@ queries:
           desc: |
             **Using CLI**
 
-            Set the appropriate ownership and permissions:
+            Find the configured client CA file. It is the value of `authentication.x509.clientCAFile` in the kubelet configuration file:
 
             ```bash
-            chown root:root /etc/srv/kubernetes/pki/ca-certificates.crt
-            chmod 600 /etc/srv/kubernetes/pki/ca-certificates.crt
+            grep clientCAFile /var/lib/kubelet/config.yaml
+            ```
+
+            Set the appropriate ownership and permissions on that file:
+
+            ```bash
+            chown root:root /etc/kubernetes/pki/ca.crt
+            chmod 600 /etc/kubernetes/pki/ca.crt
             ```
         - id: ansible
           desc: |
             **Using Ansible**
+
+            Set the `path` to the value of `authentication.x509.clientCAFile` in the kubelet configuration file:
 
             ```yaml
             ---
@@ -813,7 +827,7 @@ queries:
               tasks:
                 - name: Ensure kubelet certificate authorities file has correct ownership and permissions
                   ansible.builtin.file:
-                    path: /etc/srv/kubernetes/pki/ca-certificates.crt
+                    path: /etc/kubernetes/pki/ca.crt
                     owner: root
                     group: root
                     mode: '0600'
@@ -822,13 +836,15 @@ queries:
           desc: |
             **Using a Bash Script**
 
+            Use the path configured as `authentication.x509.clientCAFile` in the kubelet configuration file:
+
             ```bash
             #!/bin/bash
             set -e
 
             echo "Securing kubelet certificate authorities file..."
-            chown root:root /etc/srv/kubernetes/pki/ca-certificates.crt
-            chmod 600 /etc/srv/kubernetes/pki/ca-certificates.crt
+            chown root:root /etc/kubernetes/pki/ca.crt
+            chmod 600 /etc/kubernetes/pki/ca.crt
             ```
     refs:
       - url: https://kubernetes.io/docs/reference/command-line-tools-reference/kubelet/
@@ -1412,7 +1428,7 @@ queries:
       compliance/vda-isa-5: vda-isa-5-5-1-2
     mql: |
       processes.where(executable == /kube-apiserver/).list {
-        flags["insecure-port"] == 0
+        flags["insecure-port"] == 0 || flags["insecure-port"] == null
       }
     docs:
       desc: |
@@ -1444,11 +1460,17 @@ queries:
 
         If `--insecure-port` is set to `0` (or the argument is absent on a Kubernetes version where the insecure port has been removed), the check passes. If `--insecure-port` is set to any non-zero value, the check fails.
       remediation: |-
-        Find the kube-apiserver process and check the `insecure-port` argument. If the argument is set to `0`, then the kube-apiserver is not listening on an insecure HTTP port:
+        Edit the API server pod specification file `/etc/kubernetes/manifests/kube-apiserver.yaml` on the control plane node and set the insecure port to `0`:
 
-        ```bash
-        ps aux | grep kube-apiserver
+        ```yaml
+        spec:
+          containers:
+            - command:
+                - kube-apiserver
+                - --insecure-port=0
         ```
+
+        On Kubernetes 1.24 and later the `--insecure-port` flag has been removed and the API server only serves HTTPS, so no change is needed.
     refs:
       - url: https://kubernetes.io/docs/concepts/security/controlling-access/#transport-security
         title: Controlling Access to the Kubernetes API - Transport security
@@ -1503,10 +1525,14 @@ queries:
 
         If `--anonymous-auth` is set to `false`, the check passes. If it is set to `true` or is absent, the check fails.
       remediation: |-
-        Find the kube-apiserver process and check the `--anonymous-auth` argument. If the argument is set to `false`, then the kube-apiserver does not allow anonymous authentication:
+        Edit the API server pod specification file `/etc/kubernetes/manifests/kube-apiserver.yaml` on the control plane node and add the `--anonymous-auth=false` argument:
 
-        ```bash
-        ps aux | grep kube-apiserver
+        ```yaml
+        spec:
+          containers:
+            - command:
+                - kube-apiserver
+                - --anonymous-auth=false
         ```
     refs:
       - url: https://kubernetes.io/docs/reference/access-authn-authz/authentication/#anonymous-requests
@@ -1556,7 +1582,7 @@ queries:
           volumes:
             - name: vol
               hostPath:
-                - path: /var/run/docker.sock
+                path: /var/run/docker.sock
           containers:
             - name: app
               image: images.my-company.example/app:v1.2.3
@@ -1575,7 +1601,7 @@ queries:
           volumes:
             - name: vol
               hostPath:
-                - path: /var/run/docker.sock  # <--- this shouldn't be there
+                path: /var/run/docker.sock  # <--- this shouldn't be there
         ```
     refs:
       - url: https://cheatsheetseries.owasp.org/cheatsheets/Docker_Security_Cheat_Sheet.html#rule-1-do-not-expose-the-docker-daemon-socket-even-to-the-containers
@@ -1625,7 +1651,7 @@ queries:
           volumes:
             - name: vol
               hostPath:
-                - path: /var/run/docker.sock
+                path: /var/run/docker.sock
           containers:
             - name: app
               image: images.my-company.example/app:v1.2.3
@@ -1644,7 +1670,7 @@ queries:
           volumes:
             - name: vol
               hostPath:
-                - path: /var/run/docker.sock  # <--- this shouldn't be there
+                path: /var/run/docker.sock  # <--- this shouldn't be there
         ```
     refs:
       - url: https://cheatsheetseries.owasp.org/cheatsheets/Docker_Security_Cheat_Sheet.html#rule-1-do-not-expose-the-docker-daemon-socket-even-to-the-containers
@@ -1691,7 +1717,7 @@ queries:
           volumes:
             - name: vol
               hostPath:
-                - path: /var/run/docker.sock
+                path: /var/run/docker.sock
           containers:
             - name: app
               image: images.my-company.example/app:v1.2.3
@@ -1710,7 +1736,7 @@ queries:
           volumes:
             - name: vol
               hostPath:
-                - path: /var/run/docker.sock  # <--- this shouldn't be there
+                path: /var/run/docker.sock  # <--- this shouldn't be there
         ```
     refs:
       - url: https://cheatsheetseries.owasp.org/cheatsheets/Docker_Security_Cheat_Sheet.html#rule-1-do-not-expose-the-docker-daemon-socket-even-to-the-containers
@@ -1757,7 +1783,7 @@ queries:
           volumes:
             - name: vol
               hostPath:
-                - path: /var/run/docker.sock
+                path: /var/run/docker.sock
           containers:
             - name: app
               image: images.my-company.example/app:v1.2.3
@@ -1776,7 +1802,7 @@ queries:
           volumes:
             - name: vol
               hostPath:
-                - path: /var/run/docker.sock  # <--- this shouldn't be there
+                path: /var/run/docker.sock  # <--- this shouldn't be there
         ```
     refs:
       - url: https://cheatsheetseries.owasp.org/cheatsheets/Docker_Security_Cheat_Sheet.html#rule-1-do-not-expose-the-docker-daemon-socket-even-to-the-containers
@@ -1823,7 +1849,7 @@ queries:
           volumes:
             - name: vol
               hostPath:
-                - path: /var/run/docker.sock
+                path: /var/run/docker.sock
           containers:
             - name: app
               image: images.my-company.example/app:v1.2.3
@@ -1842,7 +1868,7 @@ queries:
           volumes:
             - name: vol
               hostPath:
-                - path: /var/run/docker.sock  # <--- this shouldn't be there
+                path: /var/run/docker.sock  # <--- this shouldn't be there
         ```
     refs:
       - url: https://cheatsheetseries.owasp.org/cheatsheets/Docker_Security_Cheat_Sheet.html#rule-1-do-not-expose-the-docker-daemon-socket-even-to-the-containers
@@ -1889,7 +1915,7 @@ queries:
           volumes:
             - name: vol
               hostPath:
-                - path: /var/run/docker.sock
+                path: /var/run/docker.sock
           containers:
             - name: app
               image: images.my-company.example/app:v1.2.3
@@ -1908,7 +1934,7 @@ queries:
           volumes:
             - name: vol
               hostPath:
-                - path: /var/run/docker.sock  # <--- this shouldn't be there
+                path: /var/run/docker.sock  # <--- this shouldn't be there
         ```
     refs:
       - url: https://cheatsheetseries.owasp.org/cheatsheets/Docker_Security_Cheat_Sheet.html#rule-1-do-not-expose-the-docker-daemon-socket-even-to-the-containers
@@ -1955,7 +1981,7 @@ queries:
           volumes:
             - name: vol
               hostPath:
-                - path: /var/run/docker.sock
+                path: /var/run/docker.sock
           containers:
             - name: app
               image: images.my-company.example/app:v1.2.3
@@ -1974,7 +2000,7 @@ queries:
           volumes:
             - name: vol
               hostPath:
-                - path: /var/run/docker.sock  # <--- this shouldn't be there
+                path: /var/run/docker.sock  # <--- this shouldn't be there
         ```
     refs:
       - url: https://cheatsheetseries.owasp.org/cheatsheets/Docker_Security_Cheat_Sheet.html#rule-1-do-not-expose-the-docker-daemon-socket-even-to-the-containers
@@ -2021,7 +2047,7 @@ queries:
           volumes:
             - name: vol
               hostPath:
-                - path: /run/containerd/containerd.sock
+                path: /run/containerd/containerd.sock
           containers:
             - name: app
               image: images.my-company.example/app:v1.2.3
@@ -2040,7 +2066,7 @@ queries:
           volumes:
             - name: vol
               hostPath:
-                - path: /run/containerd/containerd.sock  # <--- this shouldn't be there
+                path: /run/containerd/containerd.sock  # <--- this shouldn't be there
         ```
     refs:
       - url: https://cheatsheetseries.owasp.org/cheatsheets/Docker_Security_Cheat_Sheet.html#rule-1-do-not-expose-the-docker-daemon-socket-even-to-the-containers
@@ -2087,7 +2113,7 @@ queries:
           volumes:
             - name: vol
               hostPath:
-                - path: /run/containerd/containerd.sock
+                path: /run/containerd/containerd.sock
           containers:
             - name: app
               image: images.my-company.example/app:v1.2.3
@@ -2106,7 +2132,7 @@ queries:
           volumes:
             - name: vol
               hostPath:
-                - path: /run/containerd/containerd.sock  # <--- this shouldn't be there
+                path: /run/containerd/containerd.sock  # <--- this shouldn't be there
         ```
     refs:
       - url: https://cheatsheetseries.owasp.org/cheatsheets/Docker_Security_Cheat_Sheet.html#rule-1-do-not-expose-the-docker-daemon-socket-even-to-the-containers
@@ -2153,7 +2179,7 @@ queries:
           volumes:
             - name: vol
               hostPath:
-                - path: /run/containerd/containerd.sock
+                path: /run/containerd/containerd.sock
           containers:
             - name: app
               image: images.my-company.example/app:v1.2.3
@@ -2172,7 +2198,7 @@ queries:
           volumes:
             - name: vol
               hostPath:
-                - path: /run/containerd/containerd.sock  # <--- this shouldn't be there
+                path: /run/containerd/containerd.sock  # <--- this shouldn't be there
         ```
     refs:
       - url: https://cheatsheetseries.owasp.org/cheatsheets/Docker_Security_Cheat_Sheet.html#rule-1-do-not-expose-the-docker-daemon-socket-even-to-the-containers
@@ -2219,7 +2245,7 @@ queries:
           volumes:
             - name: vol
               hostPath:
-                - path: /run/containerd/containerd.sock
+                path: /run/containerd/containerd.sock
           containers:
             - name: app
               image: images.my-company.example/app:v1.2.3
@@ -2238,7 +2264,7 @@ queries:
           volumes:
             - name: vol
               hostPath:
-                - path: /run/containerd/containerd.sock  # <--- this shouldn't be there
+                path: /run/containerd/containerd.sock  # <--- this shouldn't be there
         ```
     refs:
       - url: https://cheatsheetseries.owasp.org/cheatsheets/Docker_Security_Cheat_Sheet.html#rule-1-do-not-expose-the-docker-daemon-socket-even-to-the-containers
@@ -2285,7 +2311,7 @@ queries:
           volumes:
             - name: vol
               hostPath:
-                - path: /run/containerd/containerd.sock
+                path: /run/containerd/containerd.sock
           containers:
             - name: app
               image: images.my-company.example/app:v1.2.3
@@ -2304,7 +2330,7 @@ queries:
           volumes:
             - name: vol
               hostPath:
-                - path: /run/containerd/containerd.sock  # <--- this shouldn't be there
+                path: /run/containerd/containerd.sock  # <--- this shouldn't be there
         ```
     refs:
       - url: https://cheatsheetseries.owasp.org/cheatsheets/Docker_Security_Cheat_Sheet.html#rule-1-do-not-expose-the-docker-daemon-socket-even-to-the-containers
@@ -2351,7 +2377,7 @@ queries:
           volumes:
             - name: vol
               hostPath:
-                - path: /run/containerd/containerd.sock
+                path: /run/containerd/containerd.sock
           containers:
             - name: app
               image: images.my-company.example/app:v1.2.3
@@ -2370,7 +2396,7 @@ queries:
           volumes:
             - name: vol
               hostPath:
-                - path: /run/containerd/containerd.sock  # <--- this shouldn't be there
+                path: /run/containerd/containerd.sock  # <--- this shouldn't be there
         ```
     refs:
       - url: https://cheatsheetseries.owasp.org/cheatsheets/Docker_Security_Cheat_Sheet.html#rule-1-do-not-expose-the-docker-daemon-socket-even-to-the-containers
@@ -2417,7 +2443,7 @@ queries:
           volumes:
             - name: vol
               hostPath:
-                - path: /run/containerd/containerd.sock
+                path: /run/containerd/containerd.sock
           containers:
             - name: app
               image: images.my-company.example/app:v1.2.3
@@ -2436,7 +2462,7 @@ queries:
           volumes:
             - name: vol
               hostPath:
-                - path: /run/containerd/containerd.sock  # <--- this shouldn't be there
+                path: /run/containerd/containerd.sock  # <--- this shouldn't be there
         ```
     refs:
       - url: https://cheatsheetseries.owasp.org/cheatsheets/Docker_Security_Cheat_Sheet.html#rule-1-do-not-expose-the-docker-daemon-socket-even-to-the-containers
@@ -2483,7 +2509,7 @@ queries:
           volumes:
             - name: vol
               hostPath:
-                - path: /var/run/crio/crio.sock
+                path: /var/run/crio/crio.sock
           containers:
             - name: app
               image: images.my-company.example/app:v1.2.3
@@ -2502,7 +2528,7 @@ queries:
           volumes:
             - name: vol
               hostPath:
-                - path: /var/run/crio/crio.sock  # <--- this shouldn't be there
+                path: /var/run/crio/crio.sock  # <--- this shouldn't be there
         ```
     refs:
       - url: https://cheatsheetseries.owasp.org/cheatsheets/Docker_Security_Cheat_Sheet.html#rule-1-do-not-expose-the-docker-daemon-socket-even-to-the-containers
@@ -2549,7 +2575,7 @@ queries:
           volumes:
             - name: vol
               hostPath:
-                - path: /var/run/crio/crio.sock
+                path: /var/run/crio/crio.sock
           containers:
             - name: app
               image: images.my-company.example/app:v1.2.3
@@ -2568,7 +2594,7 @@ queries:
           volumes:
             - name: vol
               hostPath:
-                - path: /var/run/crio/crio.sock  # <--- this shouldn't be there
+                path: /var/run/crio/crio.sock  # <--- this shouldn't be there
         ```
     refs:
       - url: https://cheatsheetseries.owasp.org/cheatsheets/Docker_Security_Cheat_Sheet.html#rule-1-do-not-expose-the-docker-daemon-socket-even-to-the-containers
@@ -2615,7 +2641,7 @@ queries:
           volumes:
             - name: vol
               hostPath:
-                - path: /var/run/crio/crio.sock
+                path: /var/run/crio/crio.sock
           containers:
             - name: app
               image: images.my-company.example/app:v1.2.3
@@ -2634,7 +2660,7 @@ queries:
           volumes:
             - name: vol
               hostPath:
-                - path: /var/run/crio/crio.sock  # <--- this shouldn't be there
+                path: /var/run/crio/crio.sock  # <--- this shouldn't be there
         ```
     refs:
       - url: https://cheatsheetseries.owasp.org/cheatsheets/Docker_Security_Cheat_Sheet.html#rule-1-do-not-expose-the-docker-daemon-socket-even-to-the-containers
@@ -2681,7 +2707,7 @@ queries:
           volumes:
             - name: vol
               hostPath:
-                - path: /var/run/crio/crio.sock
+                path: /var/run/crio/crio.sock
           containers:
             - name: app
               image: images.my-company.example/app:v1.2.3
@@ -2700,7 +2726,7 @@ queries:
           volumes:
             - name: vol
               hostPath:
-                - path: /var/run/crio/crio.sock  # <--- this shouldn't be there
+                path: /var/run/crio/crio.sock  # <--- this shouldn't be there
         ```
     refs:
       - url: https://cheatsheetseries.owasp.org/cheatsheets/Docker_Security_Cheat_Sheet.html#rule-1-do-not-expose-the-docker-daemon-socket-even-to-the-containers
@@ -2747,7 +2773,7 @@ queries:
           volumes:
             - name: vol
               hostPath:
-                - path: /var/run/crio/crio.sock
+                path: /var/run/crio/crio.sock
           containers:
             - name: app
               image: images.my-company.example/app:v1.2.3
@@ -2766,7 +2792,7 @@ queries:
           volumes:
             - name: vol
               hostPath:
-                - path: /var/run/crio/crio.sock  # <--- this shouldn't be there
+                path: /var/run/crio/crio.sock  # <--- this shouldn't be there
         ```
     refs:
       - url: https://cheatsheetseries.owasp.org/cheatsheets/Docker_Security_Cheat_Sheet.html#rule-1-do-not-expose-the-docker-daemon-socket-even-to-the-containers
@@ -2813,7 +2839,7 @@ queries:
           volumes:
             - name: vol
               hostPath:
-                - path: /var/run/crio/crio.sock
+                path: /var/run/crio/crio.sock
           containers:
             - name: app
               image: images.my-company.example/app:v1.2.3
@@ -2832,7 +2858,7 @@ queries:
           volumes:
             - name: vol
               hostPath:
-                - path: /var/run/crio/crio.sock  # <--- this shouldn't be there
+                path: /var/run/crio/crio.sock  # <--- this shouldn't be there
         ```
     refs:
       - url: https://cheatsheetseries.owasp.org/cheatsheets/Docker_Security_Cheat_Sheet.html#rule-1-do-not-expose-the-docker-daemon-socket-even-to-the-containers
@@ -2879,7 +2905,7 @@ queries:
           volumes:
             - name: vol
               hostPath:
-                - path: /var/run/crio/crio.sock
+                path: /var/run/crio/crio.sock
           containers:
             - name: app
               image: images.my-company.example/app:v1.2.3
@@ -2898,7 +2924,7 @@ queries:
           volumes:
             - name: vol
               hostPath:
-                - path: /var/run/crio/crio.sock  # <--- this shouldn't be there
+                path: /var/run/crio/crio.sock  # <--- this shouldn't be there
         ```
     refs:
       - url: https://cheatsheetseries.owasp.org/cheatsheets/Docker_Security_Cheat_Sheet.html#rule-1-do-not-expose-the-docker-daemon-socket-even-to-the-containers
@@ -5642,7 +5668,7 @@ queries:
     mql: k8s.deployment.podSpec['hostPID'] != true
     docs:
       desc: |
-        This check ensures that pods in Jobs are not configured to use the `hostPID` namespace. Setting `hostPID: true` allows containers to share the host's process ID namespace, which can be used to escalate privileges outside a container.
+        This check ensures that pods in Deployments are not configured to use the `hostPID` namespace. Setting `hostPID: true` allows containers to share the host's process ID namespace, which can be used to escalate privileges outside a container.
 
         **Why this matters**
 
@@ -5760,7 +5786,7 @@ queries:
     mql: k8s.replicaset.podSpec['hostPID'] != true
     docs:
       desc: |
-        This check ensures that pods in DaemonSets are not configured to use the `hostPID` namespace. Setting `hostPID: true` allows containers to share the host's process ID namespace, which can be used to escalate privileges outside a container.
+        This check ensures that pods in ReplicaSets are not configured to use the `hostPID` namespace. Setting `hostPID: true` allows containers to share the host's process ID namespace, which can be used to escalate privileges outside a container.
 
         **Why this matters**
 
@@ -6300,7 +6326,7 @@ queries:
         metadata:
           name: example-app
         spec:
-          serviceAccountName: some-account <-- Set the name of the ServiceAccount created for the Pod
+          serviceAccountName: some-account # <-- Set the name of the ServiceAccount created for the Pod
           containers:
             - name: example-app
               image: index.docker.io/yournamespace/repository
@@ -6390,7 +6416,7 @@ queries:
         metadata:
           name: example-app
         spec:
-          serviceAccountName: some-account <-- Set the name of the ServiceAccount created for the Pod
+          serviceAccountName: some-account # <-- Set the name of the ServiceAccount created for the Pod
           containers:
             - name: example-app
               image: index.docker.io/yournamespace/repository
@@ -6480,7 +6506,7 @@ queries:
         metadata:
           name: example-app
         spec:
-          serviceAccountName: some-account <-- Set the name of the ServiceAccount created for the Pod
+          serviceAccountName: some-account # <-- Set the name of the ServiceAccount created for the Pod
           containers:
             - name: example-app
               image: index.docker.io/yournamespace/repository
@@ -6570,7 +6596,7 @@ queries:
         metadata:
           name: example-app
         spec:
-          serviceAccountName: some-account <-- Set the name of the ServiceAccount created for the Pod
+          serviceAccountName: some-account # <-- Set the name of the ServiceAccount created for the Pod
           containers:
             - name: example-app
               image: index.docker.io/yournamespace/repository
@@ -6660,7 +6686,7 @@ queries:
         metadata:
           name: example-app
         spec:
-          serviceAccountName: some-account <-- Set the name of the ServiceAccount created for the Pod
+          serviceAccountName: some-account # <-- Set the name of the ServiceAccount created for the Pod
           containers:
             - name: example-app
               image: index.docker.io/yournamespace/repository
@@ -6750,7 +6776,7 @@ queries:
         metadata:
           name: example-app
         spec:
-          serviceAccountName: some-account <-- Set the name of the ServiceAccount created for the Pod
+          serviceAccountName: some-account # <-- Set the name of the ServiceAccount created for the Pod
           containers:
             - name: example-app
               image: index.docker.io/yournamespace/repository
@@ -6840,7 +6866,7 @@ queries:
         metadata:
           name: example-app
         spec:
-          serviceAccountName: some-account <-- Set the name of the ServiceAccount created for the Pod
+          serviceAccountName: some-account # <-- Set the name of the ServiceAccount created for the Pod
           containers:
             - name: example-app
               image: index.docker.io/yournamespace/repository
@@ -8370,6 +8396,8 @@ queries:
                 capabilities:
                   drop: ["NET_RAW"] # <-- or ensure "ALL" in the list of capabilities to drop
         ```
+
+        Apply the same capabilities configuration to every container in the pod, including entries under initContainers and ephemeralContainers.
     refs:
       - url: https://kubernetes.io/docs/concepts/security/pod-security-standards/#restricted
         title: 'Kubernetes Security Standards: Capabilities'
@@ -8499,7 +8527,7 @@ queries:
         ```
 
 
-        Additionally, a ReplicaSet that doesn't define a list of capabilities to drop at all, or that has a non-empty drop list that doesn't drop NET_RAW (or the ALL capability which includes NET_RAW) will implicitly run with NET_RAW. List these DaemonSets with:
+        Additionally, a ReplicaSet that doesn't define a list of capabilities to drop at all, or that has a non-empty drop list that doesn't drop NET_RAW (or the ALL capability which includes NET_RAW) will implicitly run with NET_RAW. List these ReplicaSets with:
 
         ```bash
         kubectl get replicasets -A -o json | jq -r '.items[] | select( .spec.template.spec.containers[].securityContext.capabilities.drop | . == null or ( any(.[] ; ascii_upcase | test("ALL|NET_RAW")) | not) ) | .metadata.namespace + "/" + .metadata.name' | uniq
@@ -8559,7 +8587,8 @@ queries:
       compliance/soc2-2017: soc2-control-cc6-3-1
       compliance/vda-isa-5: vda-isa-5-4-1-1
     mql: |
-      k8s.deployment.containers.all( addedCapabilities.none( _.upcase == /^NET_RAW$|^ALL$/ ) )
+      k8s.job.containers.all( addedCapabilities.none( _.upcase == /^NET_RAW$|^ALL$/ ) )
+      k8s.job.containers.all( droppedCapabilities.any( _.upcase == /^NET_RAW$|^ALL$/ ) )
     docs:
       desc: |
         This check ensures that Jobs are not running with the NET_RAW capability. The NET_RAW capability allows a process to write raw packets to the network interface, which can be used to craft malicious ARP or DNS responses and bypass network security controls.
@@ -8582,7 +8611,7 @@ queries:
         ```
 
 
-        Additionally, a Job that doesn't define a list of capabilities to drop at all, or that has a non-empty drop list that doesn't drop NET_RAW (or the ALL capability which includes NET_RAW) will implicitly run with NET_RAW. List these DaemonSets with:
+        Additionally, a Job that doesn't define a list of capabilities to drop at all, or that has a non-empty drop list that doesn't drop NET_RAW (or the ALL capability which includes NET_RAW) will implicitly run with NET_RAW. List these Jobs with:
 
         ```bash
         kubectl get jobs -A -o json | jq -r '.items[] | select( .spec.template.spec.containers[].securityContext.capabilities.drop | . == null or ( any(.[] ; ascii_upcase | test("ALL|NET_RAW")) | not) ) | .metadata.namespace + "/" + .metadata.name' | uniq
@@ -8642,8 +8671,8 @@ queries:
       compliance/soc2-2017: soc2-control-cc6-3-1
       compliance/vda-isa-5: vda-isa-5-4-1-1
     mql: |
-      k8s.deployment.containers.all( addedCapabilities.none( _ == "NET_RAW" ))
-      k8s.deployment.containers.all( addedCapabilities.none( _ == "ALL" ))
+      k8s.deployment.containers.all( addedCapabilities.none( _.upcase == /^NET_RAW$|^ALL$/ ) )
+      k8s.deployment.containers.all( droppedCapabilities.any( _.upcase == /^NET_RAW$|^ALL$/ ) )
     docs:
       desc: |
         This check ensures that Deployments are not running with the NET_RAW capability. The NET_RAW capability allows a process to write raw packets to the network interface, which can be used to craft malicious ARP or DNS responses and bypass network security controls.
@@ -8666,7 +8695,7 @@ queries:
         ```
 
 
-        Additionally, a Deployment that doesn't define a list of capabilities to drop at all, or that has a non-empty drop list that doesn't drop NET_RAW (or the ALL capability which includes NET_RAW) will implicitly run with NET_RAW. List these DaemonSets with:
+        Additionally, a Deployment that doesn't define a list of capabilities to drop at all, or that has a non-empty drop list that doesn't drop NET_RAW (or the ALL capability which includes NET_RAW) will implicitly run with NET_RAW. List these Deployments with:
 
         ```bash
         kubectl get deployments -A -o json | jq -r '.items[] | select( .spec.template.spec.containers[].securityContext.capabilities.drop | . == null or ( any(.[] ; ascii_upcase | test("ALL|NET_RAW")) | not) ) | .metadata.namespace + "/" + .metadata.name' | uniq
@@ -8750,7 +8779,7 @@ queries:
         ```
 
 
-        Additionally, a StatefulSet that doesn't define a list of capabilities to drop at all, or that has a non-empty drop list that doesn't drop NET_RAW (or the ALL capability which includes NET_RAW) will implicitly run with NET_RAW. List these DaemonSets with:
+        Additionally, a StatefulSet that doesn't define a list of capabilities to drop at all, or that has a non-empty drop list that doesn't drop NET_RAW (or the ALL capability which includes NET_RAW) will implicitly run with NET_RAW. List these StatefulSets with:
 
         ```bash
         kubectl get statefulsets -A -o json | jq -r '.items[] | select( .spec.template.spec.containers[].securityContext.capabilities.drop | . == null or ( any(.[] ; ascii_upcase | test("ALL|NET_RAW")) | not) ) | .metadata.namespace + "/" + .metadata.name' | uniq
@@ -8834,7 +8863,7 @@ queries:
         ```
 
 
-        Additionally, a CronJob that doesn't define a list of capabilities to drop at all, or that has a non-empty drop list that doesn't drop NET_RAW (or the ALL capability which includes NET_RAW) will implicitly run with NET_RAW. List these DaemonSets with:
+        Additionally, a CronJob that doesn't define a list of capabilities to drop at all, or that has a non-empty drop list that doesn't drop NET_RAW (or the ALL capability which includes NET_RAW) will implicitly run with NET_RAW. List these CronJobs with:
 
         ```bash
         kubectl get cronjobs -A -o json | jq -r '.items[] | select( .spec.jobTemplate.spec.template.spec.containers[].securityContext.capabilities.drop | . == null or ( any(.[] ; ascii_upcase | test("ALL|NET_RAW")) | not) ) | .metadata.namespace + "/" + .metadata.name' | uniq
@@ -9532,7 +9561,7 @@ queries:
         kubectl get jobs -A -o json | jq -r '.items[] | select( (.spec.template.spec.containers[].ports | . != empty and any(.[].hostPort; . != empty)  ) ) | .metadata.namespace + "/" + .metadata.name'  | uniq
         ```
       remediation: |
-        For any ReplicaSets that bind to a host port, update the Jobs to ensure they do not bind to a host port:
+        For any Jobs that bind to a host port, update the Jobs to ensure they do not bind to a host port:
 
         ```yaml
         apiVersion: batch/v1
@@ -10340,17 +10369,19 @@ queries:
           name: example
           namespace: example-namespace
         spec:
-          template:
+          jobTemplate:
             spec:
-              containers:
-                - volumeMounts:
-                  - mountPath: /host
-                    name: hostpath-volume
-                    readOnly: true # <-- ensure readOnly is set to true
-              volumes:
-                - hostPath:
-                    path: /etc
-                  name: hostpath-volume
+              template:
+                spec:
+                  containers:
+                    - volumeMounts:
+                      - mountPath: /host
+                        name: hostpath-volume
+                        readOnly: true # <-- ensure readOnly is set to true
+                  volumes:
+                    - hostPath:
+                        path: /etc
+                      name: hostpath-volume
         ```
     refs:
       - url: https://kubernetes.io/docs/concepts/security/pod-security-standards/
@@ -10438,10 +10469,10 @@ queries:
         Verify there are no pods running Tiller:
 
         ```bash
-        kubectl get pods -A -o=custom-columns="NAME:.metadata.name,IMAGE:.spec.template.spec.containers[*].image"
+        kubectl get pods -A -o=custom-columns="NAMESPACE:.metadata.namespace,NAME:.metadata.name,IMAGE:.spec.containers[*].image"
         ```
       remediation: |
-        Delete any pods that are running Tiller.
+        Migrate any Helm v2 releases to Helm v3, then delete the pods and the workloads that created them so Tiller no longer runs in the cluster.
     refs:
       - url: https://kubernetes.io/docs/concepts/security/pod-security-standards/
         title: Kubernetes Pod Security Standards
@@ -10532,7 +10563,7 @@ queries:
         Verify there are no pods running Kubernetes dashboard:
 
         ```bash
-        kubectl get pods -A -o=custom-columns="NAME:.metadata.name,IMAGE:.spec.template.spec.containers[*].image"
+        kubectl get pods -A -o=custom-columns="NAMESPACE:.metadata.namespace,NAME:.metadata.name,IMAGE:.spec.containers[*].image"
         ```
       remediation: |
         Delete any pods that are running Kubernetes dashboard.
@@ -10596,6 +10627,8 @@ queries:
                   drop: ["ALL"]
                   add: ["NET_BIND_SERVICE"] # <-- only add back specific capabilities that are needed
         ```
+
+        Apply the same capabilities configuration to every container in the pod, including entries under initContainers and ephemeralContainers.
     refs:
       - url: https://kubernetes.io/docs/concepts/security/pod-security-standards/#restricted
         title: 'Kubernetes Pod Security Standards: Restricted'
@@ -10657,6 +10690,8 @@ queries:
                       drop: ["ALL"]
                       add: ["NET_BIND_SERVICE"] # <-- only add back specific capabilities that are needed
         ```
+
+        Apply the same capabilities configuration to every container in the pod template, including entries under initContainers.
     refs:
       - url: https://kubernetes.io/docs/concepts/security/pod-security-standards/#restricted
         title: 'Kubernetes Pod Security Standards: Restricted'
@@ -10718,6 +10753,8 @@ queries:
                       drop: ["ALL"]
                       add: ["NET_BIND_SERVICE"] # <-- only add back specific capabilities that are needed
         ```
+
+        Apply the same capabilities configuration to every container in the pod template, including entries under initContainers.
     refs:
       - url: https://kubernetes.io/docs/concepts/security/pod-security-standards/#restricted
         title: 'Kubernetes Pod Security Standards: Restricted'
@@ -10779,6 +10816,8 @@ queries:
                       drop: ["ALL"]
                       add: ["NET_BIND_SERVICE"] # <-- only add back specific capabilities that are needed
         ```
+
+        Apply the same capabilities configuration to every container in the pod template, including entries under initContainers.
     refs:
       - url: https://kubernetes.io/docs/concepts/security/pod-security-standards/#restricted
         title: 'Kubernetes Pod Security Standards: Restricted'
@@ -10840,6 +10879,8 @@ queries:
                       drop: ["ALL"]
                       add: ["NET_BIND_SERVICE"] # <-- only add back specific capabilities that are needed
         ```
+
+        Apply the same capabilities configuration to every container in the pod template, including entries under initContainers.
     refs:
       - url: https://kubernetes.io/docs/concepts/security/pod-security-standards/#restricted
         title: 'Kubernetes Pod Security Standards: Restricted'
@@ -10901,6 +10942,8 @@ queries:
                       drop: ["ALL"]
                       add: ["NET_BIND_SERVICE"] # <-- only add back specific capabilities that are needed
         ```
+
+        Apply the same capabilities configuration to every container in the pod template, including entries under initContainers.
     refs:
       - url: https://kubernetes.io/docs/concepts/security/pod-security-standards/#restricted
         title: 'Kubernetes Pod Security Standards: Restricted'
@@ -10964,6 +11007,8 @@ queries:
                           drop: ["ALL"]
                           add: ["NET_BIND_SERVICE"] # <-- only add back specific capabilities that are needed
         ```
+
+        Apply the same capabilities configuration to every container in the pod template, including entries under initContainers.
     refs:
       - url: https://kubernetes.io/docs/concepts/security/pod-security-standards/#restricted
         title: 'Kubernetes Pod Security Standards: Restricted'
