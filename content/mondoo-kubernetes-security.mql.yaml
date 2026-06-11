@@ -1458,7 +1458,9 @@ queries:
            kubectl -n kube-system get pod -l component=kube-apiserver -o yaml | grep insecure-port
            ```
 
-        If `--insecure-port` is set to `0` (or the argument is absent on a Kubernetes version where the insecure port has been removed), the check passes. If `--insecure-port` is set to any non-zero value, the check fails.
+        If `--insecure-port` is set to `0`, or the argument is absent on a Kubernetes version where the insecure port has been removed, the check passes. If `--insecure-port` is set to any non-zero value, the check fails.
+
+        The check cannot determine the Kubernetes version from the process arguments, so an absent flag is treated as the removed-flag case. On Kubernetes 1.19 and earlier an absent flag defaults the insecure port to 8080, so set `--insecure-port=0` explicitly on those versions.
       remediation: |-
         Edit the API server pod specification file `/etc/kubernetes/manifests/kube-apiserver.yaml` on the control plane node and set the insecure port to `0`:
 
@@ -1470,7 +1472,7 @@ queries:
                 - --insecure-port=0
         ```
 
-        On Kubernetes 1.24 and later the `--insecure-port` flag has been removed and the API server only serves HTTPS, so no change is needed.
+        On Kubernetes 1.24 and later the `--insecure-port` flag has been removed and the API server only serves HTTPS, so no change is needed. On Kubernetes 1.19 and earlier, always set the flag explicitly because an absent flag defaults the insecure port to 8080.
     refs:
       - url: https://kubernetes.io/docs/concepts/security/controlling-access/#transport-security
         title: Controlling Access to the Kubernetes API - Transport security
