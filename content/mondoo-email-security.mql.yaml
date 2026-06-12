@@ -742,6 +742,8 @@ queries:
 
         The `rua` tag must point to a mailbox, not a bare domain. Review the aggregate reports it receives, fix any legitimate senders that fail authentication, then raise the policy to `p=quarantine` and finally `p=reject`. Moving straight to `p=reject` before all legitimate mail passes SPF or DKIM causes that mail to be rejected.
 
+        Note that the separate DMARC policy enforcement check in this policy fails while `p=none` is in place; that is expected during the monitoring phase and resolves when you raise the policy to `p=quarantine` or `p=reject`.
+
         You can verify that the DMARC record was added correctly using the following command:
 
         ```bash
@@ -795,7 +797,7 @@ queries:
         _dmarc.lunalectric.com.  300 IN TXT "v=DMARC1; p=reject; pct=100; rua=mailto:dmarc-reports@lunalectric.com; ruf=mailto:dmarc-failures@lunalectric.com; fo=1;"
         ```
       remediation: |
-        Publish your DMARC record as a TXT record on the `_dmarc` subdomain and make sure it begins with the `v=DMARC1` version tag. The version tag must be the first tag in the record or receivers ignore the policy entirely:
+        Publish your DMARC record as a TXT record on the `_dmarc` subdomain and make sure it begins with the `v=DMARC1` version tag. The version tag must be the first tag in the record or receivers ignore the policy entirely. The example uses `p=quarantine` because this check assumes an established DMARC record; if you are setting up DMARC for the first time, start with `p=none` as described in the DMARC record check:
 
         ```dns
         _dmarc.lunalectric.com. IN TXT "v=DMARC1; p=quarantine; rua=mailto:dmarc-reports@lunalectric.com;"
