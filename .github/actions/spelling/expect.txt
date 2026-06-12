@@ -34,6 +34,7 @@ allowusers
 alpm
 ampl
 AMQP
+ANAME
 ANSSI
 antispam
 ANVA
@@ -122,6 +123,7 @@ ccc
 ccmp
 Cdm
 cdn
+CDNSKEY
 cdp
 cdzrr
 cea
@@ -873,6 +875,7 @@ uniformbucketlevelaccess
 uninventoried
 unlinkat
 unpatchable
+Unsigning
 unversioned
 updatecerts
 uploaders
